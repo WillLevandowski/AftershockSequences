@@ -1,0 +1,77 @@
+cc
+dont_model=[23 26 33 35 38 39 40    41    42    50    53    63  67  78    93    94   100   103   105   111   119   120   124   141   147   149];
+toplot=1;
+littlec=0.05/365;
+setwindows8_2022;
+catalog_=load('Merged_CEUSCatalog2021_full.txt');
+ tic
+for events_loop=[1:149]
+    close all; eventparameters; %% identify mainshock, set background and aftershock time windows (or retain default) and other necessary sequence metadata
+%% check mc and compute b-value for subset "regional"
+mc_start=min([bg_start af_start]); mc_end=max([af_end bg_end]); %%% define start and end times of the subset "regional"
+regional=find(r<=r_mc & dec_yr>mc_start & dec_yr<mc_end & after~=0); %%% identify "regional" events
+
+%%% fit GR logN vs magnitude; uncertainties from stock function "polyfitn.m"
+[mags,n]=unique(sort(mag(regional)));
+magplot=(min(mags)-1:0.1:max(mags)+1)';
+n=length(regional)+1-n;logn=log10(n);
+    p=polyfitn(mags(mags>=mc),logn(mags>=mc),1);
+    a_regional=p.Coefficients(2);
+    b_regional=p.Coefficients(1);
+    a_regional_uncert=p.ParameterStd(2);
+    b_regional_uncert=p.ParameterStd(1);
+    pp=b_regional*magplot+a_regional;
+if toplot;PlottingBlock1of2; end %%% plot long-term seismicity and GR plot
+
+%% Determine background rate, now that mc vs. b-value is checked
+%%% define background using radius r_bg. Count events, divide by area-yr. 
+bg=find(r<=r_bg & dec_yr>bg_start & dec_yr<bg_end & mag>=mc);
+bg_duration=bg_end-bg_start;
+nbg=length(bg);
+nbg25=nbg*10^(b_regional*(2.5-mc)); %% appropriately rescaled from #mc to to #M2.5
+norm_bgmc=nbg/(area_for_bg*bg_duration);
+norm_bg25=norm_bgmc*10^(b_regional*(2.5-mc)); %% annual rate of M2.5+ in background radius
+    bg_rate=area_for_af*norm_bgmc/365; %%% rate / (area yr) * aftershock area * 1yr/365day
+
+    %% count post-mainshock seismicity in small time-radius windows (see setwindows8_2022.m)
+ntrial=length(params);
+outcomes=zeros(length(params),6);
+for i=1:ntrial
+    t0=params(i,3);duration=params(i,4);
+    r_inner=params(i,1);r_outer=params(i,2);
+    area=(pi*r_outer^2)-(pi*r_inner^2);
+    nmc=length(find( after>=t0 & after<=t0+duration & r<r_outer & r>=r_inner & mag>=mc & (after~=0 | mag~=mag(Main))));
+    n25=nmc*10^(b_regional-(2.5-mc));
+    norm_afmc=nmc/(area*duration);norm_af25=norm_afmc*10^(b_regional*(2.5-mc));
+    excess=pi*25^2*(norm_af25-norm_bg25);
+    outcomes(i,:)=[r_inner r_outer t0+duration/2 nmc n25 excess  ];
+    if max(after)<t0+0.1; outcomes(i,:)=[ r_inner r_outer t0+duration/2 NaN NaN NaN ]; end
+end
+ave_r=outcomes(:,1)/2+outcomes(:,2)/2; %% nominal epicentral distance of each time-radius box
+if toplot;PlottingBlock2of2;end %%% plot results
+
+%% Last step: Omori Decay iff ~dontmodel && #aftershocks>=5
+  af=find(dec_yr>af_start & dec_yr<af_end & r<r_af &   mag>=mc);
+  afMag=mag(af);a_value=NaN;a_valuestd=NaN;b_value=NaN;b_valuestd=NaN;a=NaN;astd=NaN;
+  K=NaN;p=NaN;pstd=NaN;Kstd=NaN;t_end=NaN;Khigh=NaN;Klow=NaN;
+  tmax=total_duration;if tmax>max(after);tmax=max(after);end
+  if bg_delay>0;tmax=bg_delay;end
+if length(af)>=5 && isempty(find(dont_model==events_loop))
+    tDays=after(af)*365;tmax=tmax*365;
+    [a_value,a_valuestd,b_value,b_valuestd,p,pstd,t_end,a,astd,K,Khigh,Klow]=OmoriFit3(m0,mc,tDays,afMag,bg_rate,events_loop,littlec,tmax,toplot);
+end
+
+%% Status reporting, make figure, store results
+fprintf(['Event ' num2str(events_loop) '...' figtitle '. ' num2str(bg_rate,'%1.4f') ' .  \n' ])
+ pause(0.01)
+EvParams2022(events_loop,:)=[ m0 Lon(Main) Lat(Main) yr(Main) mo(Main) day(Main) hr(Main) minute(Main) sec(Main) mc];
+outcomes_all(:,:,events_loop)=outcomes;
+OmoriParams(events_loop,:)=[  p pstd a astd length(af) t_end  b_value b_valuestd  a_value a_valuestd K Khigh Klow];  
+
+if mod(events_loop,10)==0;toc;end
+if toplot; ft=figtitle;  ft=ft(ft~=' ');ft=ft(ft~=','); saveas(gcf,[ft '_upload.jpg'],'jpg');end
+
+end
+
+ 
+ 
